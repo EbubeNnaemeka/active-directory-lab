@@ -1,0 +1,53 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  powershell:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - name: Install PSScriptAnalyzer
+        shell: pwsh
+        run: |
+          Set-PSRepository PSGallery -InstallationPolicy Trusted
+          Install-Module PSScriptAnalyzer -Scope CurrentUser -Force
+      - name: Lint
+        shell: pwsh
+        run: |
+          $issues = Invoke-ScriptAnalyzer -Path scripts -Recurse -Severity Warning, Error
+          $issues | Format-Table -AutoSize
+          if ($issues) { throw "$($issues.Count) PSScriptAnalyzer issue(s)" }
+      - name: Sample user CSV is reproducible and valid
+        shell: pwsh
+        run: |
+          ./scripts/New-SampleUserCsv.ps1 -OutputPath "$env:RUNNER_TEMP/users.csv" | Out-Null
+          if ((Get-FileHash data/users-500.csv).Hash -ne (Get-FileHash "$env:RUNNER_TEMP/users.csv").Hash) {
+            throw 'data/users-500.csv is out of date; re-run New-SampleUserCsv.ps1'
+          }
+          $u = Import-Csv data/users-500.csv
+          if ($u.Count -ne 500) { throw "expected 500 users, got $($u.Count)" }
+          if (($u.SamAccountName | Sort-Object -Unique).Count -ne 500) { throw 'duplicate SamAccountName' }
+          if ($u | Where-Object { $_.SamAccountName.Length -gt 20 }) { throw 'SamAccountName over 20 chars' }
+          "OK: 500 unique users"
+
+  ansible:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.12"
+      - name: Install Ansible
+        run: |
+          pip install ansible-core ansible-lint
+          ansible-galaxy collection install microsoft.ad community.general
+      - name: Syntax check and lint
+        working-directory: ansible
+        run: |
+          cp group_vars/all.yml.example group_vars/all.yml
+          ansible-playbook -i inventory.ini site.yml --syntax-check
+          ansible-lint site.yml

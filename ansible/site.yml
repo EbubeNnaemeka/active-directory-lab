@@ -1,36 +1,64 @@
 ---
-# Day-2 config playbook: assumes DC01 is already promoted (see scripts/New-Forest.ps1).
-# Run: ansible-playbook -i inventory.ini site.yml
-# Prereq on each Windows target: winrm quickconfig -q (or the bootstrap script below)
+# Day-2 config: builds the OU tree and provisions users from the CSV.
+# Assumes DC01 is already promoted (scripts/New-Forest.ps1).
+# Run: ansible-playbook -i inventory.ini site.yml --ask-vault-pass
 
-- name: Configure baseline OU structure and bulk users
+- name: Load user list on the control node
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Read users CSV
+      community.general.read_csv:
+        path: "{{ playbook_dir }}/../data/users-500.csv"
+      register: user_rows
+
+- name: Build OU structure and provision users
   hosts: domain_controllers[0]
   gather_facts: false
+  vars:
+    departments: [IT, Finance, HR, Sales, Executives]
+    users: "{{ hostvars['localhost'].user_rows.list }}"
   tasks:
     - name: Ensure Corp top-level OU exists
       microsoft.ad.ou:
         name: Corp
+        path: "{{ domain_dn }}"
+        protect_from_deletion: true
         state: present
 
-    - name: Create departmental OUs
+    - name: Ensure department OUs exist
       microsoft.ad.ou:
         name: "{{ item }}"
         path: "OU=Corp,{{ domain_dn }}"
+        protect_from_deletion: true
         state: present
-      loop:
-        - IT
-        - Finance
-        - HR
-        - Sales
-        - Executives
+      loop: "{{ departments }}"
 
-    - name: Provision users from CSV
+    - name: Ensure Users and Computers sub-OUs exist
+      microsoft.ad.ou:
+        name: "{{ item.1 }}"
+        path: "OU={{ item.0 }},OU=Corp,{{ domain_dn }}"
+        protect_from_deletion: true
+        state: present
+      loop: "{{ departments | product(['Users', 'Computers']) | list }}"
+
+    - name: Provision users
       microsoft.ad.user:
-        name: "{{ item.SamAccountName }}"
+        name: "{{ item.FirstName }} {{ item.LastName }} ({{ item.SamAccountName }})"
+        sam_account_name: "{{ item.SamAccountName }}"
+        upn: "{{ item.SamAccountName }}@{{ domain_dns }}"
         firstname: "{{ item.FirstName }}"
         surname: "{{ item.LastName }}"
+        attributes:
+          set:
+            title: "{{ item.Title }}"
+            department: "{{ item.Department }}"
         path: "OU=Users,OU={{ item.Department }},OU=Corp,{{ domain_dn }}"
-        password: "{{ default_password }}"
+        password: "{{ initial_password }}"
+        update_password: on_create
         password_expired: true
         state: present
-      loop: "{{ lookup('csv', '../data/users-template.csv') }}"
+      loop: "{{ users }}"
+      loop_control:
+        label: "{{ item.SamAccountName }}"
+      no_log: true

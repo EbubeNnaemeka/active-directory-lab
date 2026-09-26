@@ -1,27 +1,42 @@
 #Requires -Modules ActiveDirectory
 <#
-Builds a departmental OU structure modeled on a real mid-size company.
-Run on any domain-joined machine with RSAT-AD-PowerShell, or on the DC.
+.SYNOPSIS
+    Builds the departmental OU structure. Safe to re-run.
+.DESCRIPTION
+    Creates OU=Corp, one OU per department, and Users/Computers sub-OUs in
+    each, plus a delegated admin group for the IT OU. Anything that already
+    exists is left alone.
 #>
+[CmdletBinding(SupportsShouldProcess)]
+param(
+    [string[]]$Departments = @('IT', 'Finance', 'HR', 'Sales', 'Executives')
+)
 
 $domainDN = (Get-ADDomain).DistinguishedName
-$departments = @("IT", "Finance", "HR", "Sales", "Executives")
 
-# Top-level container
-New-ADOrganizationalUnit -Name "Corp" -Path $domainDN -ProtectedFromAccidentalDeletion $true
-
-foreach ($dept in $departments) {
-    $deptPath = "OU=Corp,$domainDN"
-    New-ADOrganizationalUnit -Name $dept -Path $deptPath -ProtectedFromAccidentalDeletion $true
-
-    # Sub-OUs for Users and Computers per department, common enterprise pattern
-    $newDeptPath = "OU=$dept,OU=Corp,$domainDN"
-    New-ADOrganizationalUnit -Name "Users" -Path $newDeptPath -ProtectedFromAccidentalDeletion $true
-    New-ADOrganizationalUnit -Name "Computers" -Path $newDeptPath -ProtectedFromAccidentalDeletion $true
+function New-OUIfMissing {
+    [CmdletBinding(SupportsShouldProcess)]
+    param([string]$Name, [string]$Path)
+    $dn = "OU=$Name,$Path"
+    if (Get-ADOrganizationalUnit -Filter "DistinguishedName -eq '$dn'" -ErrorAction SilentlyContinue) {
+        Write-Verbose "Exists: $dn"
+    }
+    elseif ($PSCmdlet.ShouldProcess($dn, 'Create OU')) {
+        New-ADOrganizationalUnit -Name $Name -Path $Path -ProtectedFromAccidentalDeletion $true
+        [PSCustomObject]@{ Created = $dn }
+    }
 }
 
-# Delegate department OU management to a per-department admin group (example: IT)
-New-ADGroup -Name "IT-OU-Admins" -GroupScope Global -GroupCategory Security -Path "OU=IT,OU=Corp,$domainDN"
+New-OUIfMissing -Name 'Corp' -Path $domainDN
+foreach ($dept in $Departments) {
+    New-OUIfMissing -Name $dept -Path "OU=Corp,$domainDN"
+    foreach ($sub in 'Users', 'Computers') {
+        New-OUIfMissing -Name $sub -Path "OU=$dept,OU=Corp,$domainDN"
+    }
+}
 
-Write-Host "OU structure created under OU=Corp,$domainDN"
-Write-Host "Departments: $($departments -join ', ')"
+$itPath = "OU=IT,OU=Corp,$domainDN"
+if (-not (Get-ADGroup -Filter "Name -eq 'IT-OU-Admins'" -ErrorAction SilentlyContinue) -and
+    $PSCmdlet.ShouldProcess('IT-OU-Admins', 'Create delegated admin group')) {
+    New-ADGroup -Name 'IT-OU-Admins' -GroupScope Global -GroupCategory Security -Path $itPath
+}

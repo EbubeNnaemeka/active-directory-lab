@@ -1,0 +1,6 @@
+# Copy to all.yml (git-ignored) and encrypt the password:
+#   ansible-vault encrypt_string 'YourInitialPassword!' --name initial_password
+domain_dn: "DC=corp,DC=lab"
+domain_dns: "corp.lab"
+initial_password: "REPLACE_WITH_VAULT_ENCRYPTED_VALUE"
+ansible_password: "REPLACE_WITH_VAULT_ENCRYPTED_VALUE"
