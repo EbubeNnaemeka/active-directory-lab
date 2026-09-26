@@ -1,0 +1,77 @@
+# Active Directory Enterprise Lab
+
+A self-built, multi-VM Active Directory environment simulating a mid-size enterprise domain: forest/domain setup, DNS, DHCP, OUs, bulk user provisioning, and Group Policy — built to demonstrate real sysadmin skills, not just certification study.
+
+## Architecture
+
+```mermaid
+graph TD
+    subgraph Hypervisor["Proxmox VE / VMware Workstation Host"]
+        DC1["DC01 - Windows Server 2022<br/>Domain Controller / DNS / DHCP<br/>2 vCPU, 4GB RAM"]
+        DC2["DC02 - Windows Server 2022<br/>Secondary DC (redundancy)<br/>2 vCPU, 4GB RAM"]
+        CLIENT["WIN11-CLIENT<br/>Domain-joined workstation<br/>2 vCPU, 4GB RAM"]
+    end
+    DC1 <-->|AD replication| DC2
+    CLIENT -->|domain auth / GPO| DC1
+    CLIENT -.->|failover auth| DC2
+```
+
+## What this lab includes
+
+- **Forest/domain**: `corp.lab` — single forest, single domain, two domain controllers for redundancy
+- **DNS**: AD-integrated zone, forward/reverse lookup configured
+- **DHCP**: scope configured for the client subnet, reservations for infrastructure IPs
+- **Organizational Units**: modeled after a real company structure (IT, Finance, HR, Sales, Executives — each with its own OU and delegated permissions)
+- **Bulk user provisioning**: 500+ simulated users generated via CSV + PowerShell (not created by hand)
+- **Group Policy Objects**:
+  - Password/lockout policy (enterprise baseline)
+  - Mapped network drives per department OU
+  - Desktop restriction policy for a "Sales" test OU
+  - Software restriction policy example
+
+## Prerequisites
+
+| Requirement | Details |
+|---|---|
+| Hypervisor | Proxmox VE (free) or VMware Workstation Player (free, personal use) |
+| ISOs | Windows Server 2022 Evaluation (180-day, free from Microsoft Evaluation Center), Windows 11 Evaluation |
+| Host resources | 16–32GB RAM, 4+ CPU cores, 200GB free storage |
+| Networking | Internal/host-only vSwitch so the lab never touches your real LAN |
+
+## Build order
+
+1. **Provision VMs** — see [`docs/01-vm-provisioning.md`](docs/01-vm-provisioning.md) for exact specs per VM.
+2. **Promote DC01** — run [`scripts/New-Forest.ps1`](scripts/New-Forest.ps1) to stand up the forest, DNS, and DHCP role.
+3. **Join DC02** — run [`scripts/Join-SecondDC.ps1`](scripts/Join-SecondDC.ps1) for redundancy.
+4. **Build OU structure** — run [`scripts/New-OUStructure.ps1`](scripts/New-OUStructure.ps1).
+5. **Bulk-provision users** — edit [`data/users-template.csv`](data/users-template.csv), then run [`scripts/New-BulkADUsers.ps1`](scripts/New-BulkADUsers.ps1).
+6. **Apply GPOs** — import the exported GPO backups in [`gpo/`](gpo/) via `Import-GPO`, or build from [`docs/02-gpo-design.md`](docs/02-gpo-design.md).
+7. **Join a client** — join `WIN11-CLIENT` to `corp.lab` and confirm GPOs apply (`gpresult /r`).
+
+Day-2 configuration is also automatable via the Ansible playbook in [`ansible/`](ansible/) if you'd rather not run each PowerShell script by hand.
+
+## Resume bullet (use once you have completed and verified the lab)
+
+> Deployed a multi-server Active Directory forest (Proxmox/Windows Server 2022) with redundant DNS/DHCP and 15 Group Policy Objects managing 500+ simulated user accounts across 5 departmental OUs.
+
+## Repo contents
+
+```
+├── README.md
+├── docs/
+│   ├── 01-vm-provisioning.md
+│   └── 02-gpo-design.md
+├── scripts/
+│   ├── New-Forest.ps1
+│   ├── Join-SecondDC.ps1
+│   ├── New-OUStructure.ps1
+│   └── New-BulkADUsers.ps1
+├── data/
+│   └── users-template.csv
+├── ansible/
+│   ├── inventory.ini
+│   ├── site.yml
+│   └── roles/
+└── gpo/
+    └── README.md
+```

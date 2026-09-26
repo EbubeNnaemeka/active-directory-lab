@@ -1,0 +1,36 @@
+---
+# Day-2 config playbook: assumes DC01 is already promoted (see scripts/New-Forest.ps1).
+# Run: ansible-playbook -i inventory.ini site.yml
+# Prereq on each Windows target: winrm quickconfig -q (or the bootstrap script below)
+
+- name: Configure baseline OU structure and bulk users
+  hosts: domain_controllers[0]
+  gather_facts: false
+  tasks:
+    - name: Ensure Corp top-level OU exists
+      microsoft.ad.ou:
+        name: Corp
+        state: present
+
+    - name: Create departmental OUs
+      microsoft.ad.ou:
+        name: "{{ item }}"
+        path: "OU=Corp,{{ domain_dn }}"
+        state: present
+      loop:
+        - IT
+        - Finance
+        - HR
+        - Sales
+        - Executives
+
+    - name: Provision users from CSV
+      microsoft.ad.user:
+        name: "{{ item.SamAccountName }}"
+        firstname: "{{ item.FirstName }}"
+        surname: "{{ item.LastName }}"
+        path: "OU=Users,OU={{ item.Department }},OU=Corp,{{ domain_dn }}"
+        password: "{{ default_password }}"
+        password_expired: true
+        state: present
+      loop: "{{ lookup('csv', '../data/users-template.csv') }}"
